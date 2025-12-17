@@ -1,0 +1,5 @@
+{
+  "name": "Obsidian MVP",
+  "description": "A node-based knowledge management tool with automatic graph linking, bidirectional references, and AI-powered insights.",
+  "requestFramePermissions": []
+}
