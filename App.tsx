@@ -5,10 +5,8 @@ import {
   Settings, 
   Plus, 
   Folder, 
-  Share2, 
   Network, 
   Layout, 
-  Wand2, 
   ChevronRight, 
   ChevronDown,
   Menu,
@@ -19,7 +17,6 @@ import {
 } from 'lucide-react';
 import { Note, extractLinks, extractTags, ViewMode } from './types';
 import * as Storage from './services/storageService';
-import * as AI from './services/geminiService';
 import GraphView from './components/GraphView';
 import CanvasBoard from './components/CanvasBoard';
 
@@ -46,8 +43,6 @@ const App = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('editor');
   const [isSidebarOpen, setSidebarOpen] = useState(true);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [canvasRefreshKey, setCanvasRefreshKey] = useState(0); // To force canvas reload on import
   
@@ -114,25 +109,6 @@ const App = () => {
       if (activeNoteId === id) setActiveNoteId(null);
     }
   };
-
-  const handleAiSuggest = async () => {
-    if (!activeNote) return;
-    setAiLoading(true);
-    setAiSuggestion(null);
-    const suggestion = await AI.suggestConnections(activeNote, notes);
-    setAiSuggestion(suggestion);
-    setAiLoading(false);
-  };
-
-  const handleAiExpand = async () => {
-      if (!activeNote) return;
-      setAiLoading(true);
-      const expandedText = await AI.expandNote(activeNote.content);
-      if (expandedText) {
-          handleUpdateNote(activeNote.id, { content: activeNote.content + '\n\n' + expandedText });
-      }
-      setAiLoading(false);
-  }
 
   // --- Import / Export ---
   const handleExportData = () => {
@@ -328,13 +304,6 @@ const App = () => {
           <div className="flex items-center gap-2">
             {activeNoteId && viewMode === 'editor' && (
                 <>
-                <Button variant="ghost" onClick={handleAiExpand} title="AI Expand Content">
-                    {aiLoading ? <div className="animate-spin w-4 h-4 border-2 border-t-transparent border-white rounded-full"></div> : <Wand2 size={16} className="text-purple-400" />}
-                </Button>
-                 <Button variant="ghost" onClick={handleAiSuggest} title="AI Connections">
-                    <Share2 size={16} className="text-blue-400" />
-                </Button>
-                <div className="h-4 w-[1px] bg-gray-700 mx-2"></div>
                 <Button variant="ghost" className="text-red-400 hover:bg-red-900/20" onClick={() => handleDeleteNote(activeNoteId)}>
                   <span className="text-xs">Delete</span>
                 </Button>
@@ -385,19 +354,6 @@ const App = () => {
                   placeholder="Start writing... Use [[Link]] to connect ideas."
                 />
               </div>
-
-              {/* AI Suggestion Panel (Floating) */}
-              {aiSuggestion && (
-                  <div className="absolute right-8 bottom-8 w-80 bg-obsidian-sidebar border border-obsidian-accent shadow-2xl rounded-lg p-4 z-20 animate-in fade-in slide-in-from-bottom-5">
-                      <div className="flex justify-between items-center mb-2">
-                          <h4 className="text-sm font-bold text-obsidian-accent flex items-center gap-2"><Wand2 size={14}/> AI Suggestions</h4>
-                          <button onClick={() => setAiSuggestion(null)} className="text-gray-500 hover:text-white"><X size={14}/></button>
-                      </div>
-                      <div className="text-xs text-gray-300 whitespace-pre-wrap max-h-60 overflow-y-auto">
-                          {aiSuggestion}
-                      </div>
-                  </div>
-              )}
             </div>
           ) : viewMode === 'editor' && !activeNote ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-600">
