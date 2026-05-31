@@ -48,13 +48,20 @@ const App = () => {
 
   // Load data on mount
   useEffect(() => {
-    const loadedNotes = Storage.getNotes();
-    const loadedFolders = Storage.getFolders();
-    setNotes(loadedNotes);
-    setFolders(loadedFolders);
-    if (loadedNotes.length > 0) setActiveNoteId(loadedNotes[0].id);
+    const loadData = async () => {
+      try {
+        const fetchedNotes = await Storage.fetchNotes();
+        const fetchedFolders = await Storage.fetchFolders();
+        setNotes(fetchedNotes);
+        setFolders(fetchedFolders);
+        if (fetchedNotes.length > 0) setActiveNoteId(fetchedNotes[0].id);
+      } catch (err) {
+        console.error("Failed to fetch initial data", err);
+      }
+    };
+    loadData();
 
-    // Init Sync
+    // Init Real-Time Firebase Sync
     Storage.initSync((syncedNotes) => {
       setNotes(syncedNotes);
     }, (syncedFolders) => {
@@ -63,62 +70,66 @@ const App = () => {
   }, []);
 
 
-
   const activeNote = useMemo(() => notes.find(n => n.id === activeNoteId), [notes, activeNoteId]);
 
   // Actions
-  const handleCreateNote = () => {
-    const newNote: Note = {
-      id: Date.now().toString(),
-      title: 'Untitled Note',
-      content: '',
-      folder: 'Inbox', // Default to Inbox, user can move it
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      tags: []
-    };
-    const updatedNotes = [newNote, ...notes];
-    setNotes(updatedNotes);
-    Storage.saveNotes(updatedNotes);
-    setActiveNoteId(newNote.id);
-    setViewMode('editor');
+  const handleCreateNote = async () => {
+    try {
+      const newNote = await Storage.createNote({
+        title: 'Untitled Note',
+        content: '',
+        folder: 'Inbox'
+      });
+      setNotes(prev => [newNote, ...prev]);
+      setActiveNoteId(newNote.id);
+      setViewMode('editor');
+    } catch (err) {
+      console.error("Failed to create note", err);
+    }
   };
 
-  const handleCreateFolder = () => {
+  const handleCreateFolder = async () => {
     const name = prompt("Enter new folder name:");
     if (name && name.trim() !== "") {
       if (folders.includes(name.trim())) {
         alert("Folder already exists.");
         return;
       }
-      const newFolders = [...folders, name.trim()];
-      setFolders(newFolders);
-      Storage.saveFolders(newFolders);
+      try {
+        const newFolder = await Storage.createFolder(name.trim());
+        setFolders(prev => [...prev, newFolder]);
+      } catch (err) {
+        console.error("Failed to create folder", err);
+      }
     }
   };
 
-  const handleUpdateNote = (id: string, updates: Partial<Note>) => {
-    setNotes(prev => {
-      const newNotes = prev.map(n => {
-        if (n.id !== id) return n;
-        const updated = { ...n, ...updates, updatedAt: Date.now() };
-        // Auto-extract tags
-        if (updates.content !== undefined) {
-          updated.tags = extractTags(updates.content);
-        }
-        return updated;
-      });
-      Storage.saveNotes(newNotes);
-      return newNotes;
-    });
+  const handleUpdateNote = async (id: string, updates: Partial<Note>) => {
+    setNotes(prev => prev.map(n => {
+      if (n.id !== id) return n;
+      const updated = { ...n, ...updates, updatedAt: Date.now() };
+      if (updates.content !== undefined) {
+        updated.tags = extractTags(updates.content);
+      }
+      return updated;
+    }));
+
+    try {
+      await Storage.updateNote(id, updates);
+    } catch (err) {
+      console.error("Failed to update note", err);
+    }
   };
 
-  const handleDeleteNote = (id: string) => {
+  const handleDeleteNote = async (id: string) => {
     if (confirm('Are you sure you want to delete this note?')) {
-      const newNotes = notes.filter(n => n.id !== id);
-      setNotes(newNotes);
-      Storage.saveNotes(newNotes);
+      setNotes(prev => prev.filter(n => n.id !== id));
       if (activeNoteId === id) setActiveNoteId(null);
+      try {
+        await Storage.deleteNote(id);
+      } catch (err) {
+        console.error("Failed to delete note", err);
+      }
     }
   };
 
@@ -147,40 +158,36 @@ const App = () => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
 
-        // Import Folders
+        let mergedFolders = folders;
         if (data.folders && Array.isArray(data.folders)) {
-          // Merge unique folders
-          const mergedFolders = Array.from(new Set([...folders, ...data.folders]));
-          setFolders(mergedFolders);
-          Storage.saveFolders(mergedFolders);
+          mergedFolders = Array.from(new Set([...folders, ...data.folders]));
         }
 
-        // Import Notes
+        let mergedNotes = notes;
         if (data.notes && Array.isArray(data.notes)) {
-          // Merge: Overwrite existing ID, add new
-          // Explicitly type the Map to avoid inference errors with array map
           const mergedNotesMap = new Map<string, Note>(notes.map(n => [n.id, n] as [string, Note]));
           data.notes.forEach((n: Note) => mergedNotesMap.set(n.id, n));
-          const mergedNotes = Array.from(mergedNotesMap.values());
-
-          setNotes(mergedNotes);
-          Storage.saveNotes(mergedNotes);
+          mergedNotes = Array.from(mergedNotesMap.values());
         }
 
-        // Import Canvases
+        await Storage.importData(mergedNotes, mergedFolders);
+        
+        if (data.folders && Array.isArray(data.folders)) setFolders(mergedFolders);
+        if (data.notes && Array.isArray(data.notes)) setNotes(mergedNotes);
+
         if (data.canvases && Array.isArray(data.canvases)) {
           Storage.saveCanvases(data.canvases);
-          setCanvasRefreshKey(prev => prev + 1); // Force canvas reload
+          setCanvasRefreshKey(prev => prev + 1);
         }
 
         alert(`Import successful! ${data.notes?.length || 0} notes processed.`);
       } catch (error) {
         console.error(error);
-        alert('Error importing file. Invalid JSON.');
+        alert('Error importing file. Invalid JSON or server error.');
       }
     };
     reader.readAsText(file);

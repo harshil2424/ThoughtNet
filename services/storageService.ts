@@ -1,80 +1,94 @@
 import { Note, Canvas } from '../types';
 import { db } from './firebase';
-import { ref, onValue, set } from 'firebase/database';
+import { ref, onValue } from 'firebase/database';
 
-const STORAGE_KEY_NOTES = 'obsidian_mvp_notes';
-const STORAGE_KEY_FOLDERS = 'obsidian_mvp_folders';
 const STORAGE_KEY_CANVASES = 'obsidian_mvp_canvases';
-
-// Real-time listener unsubscribers
-let unsubscribeNotes: (() => void) | null = null;
-let unsubscribeSettings: (() => void) | null = null;
 
 export const initSync = (
   onNotesUpdate: (notes: Note[]) => void,
   onFoldersUpdate: (folders: string[]) => void
 ) => {
-  console.log("RTDB: Init Sync called - attempting to connect");
-
-  // 1. Listen to Notes (Shared Path)
   const notesRef = ref(db, 'notes');
-
-  unsubscribeNotes = onValue(notesRef, (snapshot) => {
-    console.log("RTDB: Notes snapshot received");
+  onValue(notesRef, (snapshot) => {
     const data = snapshot.val();
     if (data) {
-      console.log("RTDB: Notes data found", Object.keys(data).length);
-      // Convert object back to array if stored as object, or just array
       const rawNotes: any[] = Array.isArray(data) ? data : Object.values(data);
       const notesList: Note[] = rawNotes.map(n => ({
         ...n,
-        tags: n.tags || [] // Ensure tags is always an array
+        tags: n.tags || []
       }));
       onNotesUpdate(notesList);
     } else {
-      console.log("RTDB: Notes data is null/empty");
+      onNotesUpdate([]);
     }
-  }, (error) => {
-    console.error("RTDB: Storage Error (Notes):", error);
   });
 
-  // 2. Listen to Folders (Shared Path)
   const foldersRef = ref(db, 'folders');
-  unsubscribeSettings = onValue(foldersRef, (snapshot) => {
-    console.log("RTDB: Folders snapshot received");
+  onValue(foldersRef, (snapshot) => {
     const data = snapshot.val();
     if (data) {
-      console.log("RTDB: Folders found", data);
       onFoldersUpdate(data);
     }
-  }, (error) => {
-    console.error("RTDB: Storage Error (Folders):", error);
   });
-
-  console.log("RTDB Sync initialized (Shared Mode)");
 };
 
-export const saveNotes = (notes: Note[]) => {
-  // Save to LocalStorage as backup/cache
-  localStorage.setItem(STORAGE_KEY_NOTES, JSON.stringify(notes));
-
-  // Save to RTDB
-  console.log("RTDB: Saving notes...", notes.length);
-  set(ref(db, 'notes'), notes)
-    .then(() => console.log("RTDB: Notes save success"))
-    .catch(err => console.error("RTDB: Notes save failed", err));
+export const fetchNotes = async (): Promise<Note[]> => {
+  const res = await fetch('/api/notes');
+  if (!res.ok) throw new Error('Failed to fetch notes');
+  return res.json();
 };
 
-export const saveFolders = (folders: string[]) => {
-  localStorage.setItem(STORAGE_KEY_FOLDERS, JSON.stringify(folders));
-
-  console.log("RTDB: Saving folders...", folders.length);
-  set(ref(db, 'folders'), folders)
-    .then(() => console.log("RTDB: Folders save success"))
-    .catch(err => console.error("RTDB: Folders save failed", err));
+export const createNote = async (note: Partial<Note>): Promise<Note> => {
+  const params = new URLSearchParams();
+  if (note.title) params.append('title', note.title);
+  if (note.content) params.append('content', note.content);
+  if (note.folder) params.append('folder', note.folder);
+  if (note.id) params.append('id', note.id);
+  
+  const res = await fetch(`/api/create-note?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to create note');
+  const data = await res.json();
+  return data.note;
 };
 
-// Canvas sync omitted for brevity, logic would be similar
+export const updateNote = async (id: string, updates: Partial<Note>): Promise<Note> => {
+  const params = new URLSearchParams();
+  params.append('id', id);
+  if (updates.title !== undefined) params.append('title', updates.title);
+  if (updates.content !== undefined) params.append('content', updates.content);
+  if (updates.folder !== undefined) params.append('folder', updates.folder);
+  
+  const res = await fetch(`/api/edit-note?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to update note');
+  const data = await res.json();
+  return data.note;
+};
+
+export const deleteNote = async (id: string): Promise<void> => {
+  const res = await fetch(`/api/delete-note?id=${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error('Failed to delete note');
+};
+
+export const fetchFolders = async (): Promise<string[]> => {
+  const res = await fetch('/api/folders');
+  if (!res.ok) throw new Error('Failed to fetch folders');
+  return res.json();
+};
+
+export const createFolder = async (name: string): Promise<string> => {
+  const res = await fetch(`/api/create-folder?name=${encodeURIComponent(name)}`);
+  if (!res.ok) throw new Error('Failed to create folder');
+  const data = await res.json();
+  return data.folder;
+};
+
+export const importData = async (notes: Note[], folders: string[]): Promise<void> => {
+  const params = new URLSearchParams();
+  params.append('data', JSON.stringify({ notes, folders }));
+  const res = await fetch(`/api/import?${params.toString()}`);
+  if (!res.ok) throw new Error('Failed to import data');
+};
+
 export const getCanvases = (): Canvas[] => {
   const stored = localStorage.getItem(STORAGE_KEY_CANVASES);
   return stored ? JSON.parse(stored) : [];
@@ -82,15 +96,4 @@ export const getCanvases = (): Canvas[] => {
 
 export const saveCanvases = (canvases: Canvas[]) => {
   localStorage.setItem(STORAGE_KEY_CANVASES, JSON.stringify(canvases));
-};
-
-// Hybrid Getters: Return Local first (for instant load), then Sync updates
-export const getNotes = (): Note[] => {
-  const stored = localStorage.getItem(STORAGE_KEY_NOTES);
-  return stored ? JSON.parse(stored) : [];
-};
-
-export const getFolders = (): string[] => {
-  const stored = localStorage.getItem(STORAGE_KEY_FOLDERS);
-  return stored ? JSON.parse(stored) : ['Inbox', 'Notes', 'Projects'];
 };
